@@ -1,0 +1,11 @@
+/target
+/build
+/target/       
+/target/**
+/build/
+!/build/out.png 
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.tmp
