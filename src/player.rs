@@ -12,8 +12,8 @@ pub struct Player {
 // Inputs, movimientos y salidas
 // Raylib es lo que permite hacer el manejo de lectura del teclado
 pub fn process_events(player: &mut Player, rl: &RaylibHandle, maze: &Maze, block_size: usize) {
-    const MOVE_SPEED: f32 = 10.0; // píxeles por movimiento
-    const ROTATION_SPEED: f32 = PI / 30.0; // grados por movimiento
+    const MOVE_SPEED: f32 = 4.0; // píxeles por movimiento
+    const ROTATION_SPEED: f32 = PI / 60.0; // grados por movimiento
 
     // Girar
     if rl.is_key_down(KeyboardKey::KEY_RIGHT)  { player.a += ROTATION_SPEED; }

@@ -2,19 +2,22 @@ mod framebuffer;
 mod maze;
 mod caster;
 mod player;
+mod textures;
+
 use maze::{Maze, load_maze, find_char};
 use caster::cast_ray;
 use framebuffer::Framebuffer;
 use player::{Player, process_events};
 use raylib::prelude::*;
+use crate::textures::TextureManager;
 
 fn cell_to_color(cell: char) -> Color {
     match cell {
-        '+' => Color::BLUEVIOLET,
-        '-' => Color::VIOLET,
-        '|' => Color::VIOLET,
-        'g' => Color::GREEN,
-        _ => Color::WHITE,
+        '+' => Color::new(24, 32, 56, 255),   // navy oscuro
+        '-' => Color::new(0, 218, 209, 255),  // cian vibrante
+        '|' => Color::new(245, 96, 170, 255), // rosa fuerte
+        'g' => Color::new(255, 219, 88, 255), // dorado cálido
+        _ => Color::LIGHTGRAY,
     }
 }
 
@@ -39,12 +42,14 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize,
     let mini = ((block_size as f32) * scale) as usize;
     let (ox, oy) = origin;
 
-    // fondo del minimapa, es como un borde adicional a lo del maze
-    // TODO: cambiar color
-    framebuffer.set_current_color(Color::DARKBLUE);
+    // fondo del minimapa (área completa, color visible pero semitransparente)
+    framebuffer.set_current_color(Color::new(235, 192, 121, 255));
+    framebuffer.fill_rect(ox, oy, (maze[0].len() * mini) as i32, (maze.len() * mini) as i32);
+
+    // marco del minimapa
+    framebuffer.set_current_color(Color::new(235, 192, 121, 255));
     framebuffer.fill_rect(ox - 4, oy - 4, (maze[0].len() * mini + 8) as i32, (maze.len() * mini + 8) as i32);
 
-    // Dibujar celdas, y hacerlo de cada uno de los colores
     for (row_index, row) in maze.iter().enumerate() {
         for (col_index, &cell) in row.iter().enumerate() {
             let xo = col_index * mini;
@@ -53,60 +58,68 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize,
         }
     }
 
-    // jugador en el minimapa
-    let px = (player.pos.x as usize / block_size) * mini;
-    let py = (player.pos.y as usize / block_size) * mini;
-    framebuffer.set_current_color(Color::YELLOW);
-    framebuffer.fill_rect(ox + px as i32 - 2, oy + py as i32 - 2, 4, 4);
+    // jugador en el minimapa (posición subcelda para movimiento suave)
+    let pmini_x = (player.pos.x / block_size as f32) * mini as f32;
+    let pmini_y = (player.pos.y / block_size as f32) * mini as f32;
+    framebuffer.set_current_color(Color::BLACK);
+    framebuffer.fill_rect(ox + pmini_x as i32 - 2, oy + pmini_y as i32 - 2, 5, 5);
 }
 
-// Mundo 3D
-fn render_world(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize, player: &Player) {
-    // Tiramos un rayo por col del framebuffer
-    let num_rays = framebuffer.width;
+fn render_world(
+    framebuffer: &mut Framebuffer,
+    maze: &Maze,
+    block_size: usize,
+    player: &Player,
+    texman: &mut TextureManager,
+) {
+    let num_rays = framebuffer.width; // 1 rayo por columna
     let hh = framebuffer.height as f32 / 2.0; // half height
 
-    // Cielo
-    // TODO: cambiar color
-    framebuffer.set_current_color(Color::new(70, 80, 140, 255)); 
+    // Cielo (techo frío)
+    framebuffer.set_current_color(Color::SKYBLUE);
     framebuffer.fill_rect(0, 0, framebuffer.width as i32, hh as i32);
-
-    // Piso
-    // TODO: cambiar color
-    framebuffer.set_current_color(Color::new(30, 30, 40, 255));
+    // Piso (floor color from sampled image: R=215, G=214, B=182)
+    framebuffer.set_current_color(Color::new(215, 214, 182, 255));
     framebuffer.fill_rect(0, hh as i32, framebuffer.width as i32, hh as i32);
 
-    // La altura de la pared es proporcional a la distancia al plano de proyección
-    // Si el fov es grande, la camara esta mas cerca y las paredes parecen mas altas
-    // Esto no lo termino de entender
-    // TODO: preguntar Erick
+    // Distancia del plano de proyección (corrección por FOV)
     let dist_plane = (framebuffer.width as f32 / 2.0) / (player.fov / 2.0).tan();
+    let bs = block_size as f32;
 
     for i in 0..num_rays {
-        let current_ray = i as f32 / num_rays as f32;
+        let current_ray = i as f32 / num_rays as f32; // [0,1)
         let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
         let hit = cast_ray(framebuffer, maze, player, a, block_size, false);
 
-        // TODO: chat me dijo que esto era para evitar el fisheye, no lo entiendo al 100, preguntar Erick
+        // Corrección de "fisheye": distancia perpendicular
         let mut perp = hit.distance * (a - player.a).cos().abs();
-        if perp < 0.0001 { perp = 0.0001; }
+        // Near plane más agresivo para evitar columnas gigantes al acercarse
+        let near = 0.35 * bs; // 35% del tamaño de la celda
+        if perp < near { perp = near; }
 
-        // Escalabilidad de pixeles?
-        let stake_height = ((block_size as f32) * dist_plane) / perp;
-
-        // Posición vertical
+        // Altura de la columna (stake) con límite superior más estricto
+        let stake_height = ((bs * dist_plane) / perp).min(framebuffer.height as f32 * 0.9);
         let stake_top = (hh - stake_height * 0.5) as i32;
         let stake_bottom = (hh + stake_height * 0.5) as i32;
 
-        // Colores en base a pared tocada
-        let base = match hit.impact { '+' => Color::BLUEVIOLET, '-' | '|' => Color::VIOLET, 'g' => Color::GREEN, _ => Color::RAYWHITE };
-        let shade = ((1.0 / (1.0 + perp * 0.01)).clamp(0.2, 1.0) * 255.0) as u8;
-        let wall_color = Color::new((base.r as u16 * shade as u16 / 255) as u8,
-                                    (base.g as u16 * shade as u16 / 255) as u8,
-                                    (base.b as u16 * shade as u16 / 255) as u8,
-                                    255);
-        framebuffer.set_current_color(wall_color);
-        framebuffer.draw_vline(i, stake_top, stake_bottom);
+        // Dimensiones de la textura para el tipo de pared impactada
+        let (tw_u, th_u) = texman.get_image_size(hit.impact);
+        let tw = tw_u as i32; let th = th_u as i32;
+
+        // Coordenada X dentro de la textura usando fracción robusta provista por el raycast
+        let tex_x = (hit.tex_frac * tw as f32).clamp(0.0, tw as f32 - 1.0) as i32;
+
+        // Pintar la columna muestreando la textura y sombreando por distancia
+        let y_start = stake_top.max(0);
+        let y_end = stake_bottom.min(framebuffer.height as i32 - 1);
+        for y in y_start..=y_end {
+            let v = (y as f32 - y_start as f32) / ((y_end - y_start).max(1) as f32);
+            let tex_y = (v * th as f32).clamp(0.0, th as f32 - 1.0) as i32;
+
+            let c = texman.get_pixel_color_mut(hit.impact, tex_x as u32, tex_y as u32);
+            framebuffer.set_current_color(c);
+            framebuffer.set_pixel(i, y as u32);
+        }
     }
 }
 
@@ -121,7 +134,7 @@ pub fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raycaster 3D — baseline")
+        .title("Raycaster 3D")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
 
@@ -129,6 +142,9 @@ pub fn main() {
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
     let maze = load_maze("maze.txt");
+
+    // Cargar texturas de paredes (wall + graffiti por tipo)
+    let mut texman = TextureManager::new(&mut window, &raylib_thread).expect("Error cargando texturas");
 
     // Posición inicial en 'p' (centro del bloque)
     let (start_i, start_j) = find_char(&maze, 'p').unwrap_or((1, 1));
@@ -138,7 +154,7 @@ pub fn main() {
     let mut player = Player {
         pos: Vector2::new(start_x, start_y),
         a: PI / 3.0,
-        fov: PI / 3.0,
+        fov: PI / 2.0,
     };
 
     // Main render loop
@@ -151,7 +167,7 @@ pub fn main() {
 
         // RENDER STEP
         // renderiza el mundo 3D
-        render_world(&mut framebuffer, &maze, block_size, &player);
+        render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
         // renderiza el minimapa
         render_minimap(&mut framebuffer, &maze, block_size, &player, (16, 16), 0.15);
 
