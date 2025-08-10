@@ -155,7 +155,7 @@ pub fn render_sprites(
         x: gate_pos.0,
         y: gate_pos.1,
         size: block_size as f32 * 1.0,
-        ch: if got_coins >= 3 { 'Q' } else { 'P' },
+        ch: if got_coins >= 5 { 'Q' } else { 'P' },
         alive: true,
     });
 
@@ -236,19 +236,17 @@ pub fn render_sprites(
 /// Check pickup: si el jugador está cerca de una moneda -> recolectar
 pub fn pickup_coins(player: &Player, sprites: &mut [Sprite], block_size: usize) -> usize {
     let r = 0.35 * block_size as f32;
-    let mut count = 0;
+
+    // 1) recolecta: marca como muertas las monedas cerca del jugador
     for s in sprites.iter_mut() {
         if s.alive && s.ch == 'c' {
             let d = (s.x - player.pos.x).hypot(s.y - player.pos.y);
             if d < r { s.alive = false; }
         }
-        if s.alive == false && s.ch == 'c' {
-            // contar no, solo vivos; contamos afuera
-        }
     }
-    for s in sprites.iter() {
-        if s.alive && s.ch == 'c' { count += 1; }
-    }
-    let collected = 3usize.saturating_sub(count);
-    collected
+
+    // 2) cuenta total y vivas para devolver "collected = total - vivas"
+    let total  = sprites.iter().filter(|s| s.ch == 'c').count();
+    let alive  = sprites.iter().filter(|s| s.ch == 'c' && s.alive).count();
+    total.saturating_sub(alive)
 }

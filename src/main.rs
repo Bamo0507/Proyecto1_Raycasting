@@ -12,6 +12,10 @@ use player::{Player, process_events};
 use raylib::prelude::*;
 use crate::textures::TextureManager;
 use sprites::{SpriteManager as SpriteMgr, spawn_coins, render_sprites, pickup_coins, Sprite};
+use raylib::core::audio::{RaylibAudio, Sound, Music};
+use std::time::{Duration, Instant};
+
+const KEYS_TOTAL: usize = 5;
 
 fn cell_to_color(cell: char) -> Color {
     match cell {
@@ -154,6 +158,18 @@ pub fn main() {
     let mut framebuffer = Framebuffer::new(window_width as u32, window_height as u32);
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
+    // --- Audio (raylib-rs 5.5.1) ---
+    let audio = RaylibAudio::init_audio_device().expect("No se pudo iniciar el audio");
+
+    // Música de fondo (stream)
+    let theme = audio.new_music("assets/theme.mp3").expect("No se pudo cargar assets/theme.mp3");
+    theme.set_volume(0.6);
+    theme.play_stream();
+
+    // SFX
+    let police_snd = audio.new_sound("assets/police.mp3").expect("No se pudo cargar assets/police.mp3");
+    let key_snd    = audio.new_sound("assets/key.mp3").expect("No se pudo cargar assets/key.mp3");
+
     let maze = load_maze("maze.txt");
 
     // Cargar texturas de paredes (wall + graffiti por tipo)
@@ -174,7 +190,7 @@ pub fn main() {
     let mut spriteman = SpriteMgr::new().expect("Error cargando sprites");
 
     // Posiciones aleatorias de 3 monedas
-    let mut coins: Vec<Sprite> = spawn_coins(&maze, block_size, 3);
+    let mut coins: Vec<Sprite> = spawn_coins(&maze, block_size, KEYS_TOTAL);
 
     // Posición del portal 'g' (centro de la celda)
     let (gi, gj) = find_char(&maze, 'g').unwrap_or((maze[0].len()-2, maze.len()-2));
@@ -183,18 +199,65 @@ pub fn main() {
         (gj * block_size + block_size/2) as f32
     );
 
-// Contador
-let mut collected = 0usize;
+    // Contador
+    let mut collected = 0usize;
+
+    // Timer de nivel y estado de audio/proximidad
+    let level_total = Duration::from_secs(60);
+    let level_start = Instant::now();
+    let mut lost = false;
+    let mut last_police = Instant::now() - Duration::from_millis(1000);
+    let mut prev_collected = 0usize;
+    let mut picked_key = false;
 
     // Main render loop
     while !window.window_should_close() {
         // Resetea el lienzo
         framebuffer.clear();
+        theme.update_stream();
 
         // actua acorde a inputs o colisiones
         process_events(&mut player, &window, &maze, block_size);
 
         collected = pickup_coins(&player, &mut coins, block_size);
+
+        // Sonido de coin al recoger una nueva
+        if collected > prev_collected {
+            key_snd.play();
+            prev_collected = collected;
+        }
+
+        // Timer de nivel
+        let elapsed = level_start.elapsed();
+        let time_left = if elapsed >= level_total { 0 } else { (level_total - elapsed).as_secs() as u32 };
+
+        // Si se acabó el tiempo, marcar derrota y sonar policía una vez
+        if time_left == 0 && !lost {
+            lost = true;
+            police_snd.play();
+        }
+
+        // Proximidad al portal bloqueado: sirena si te acercas sin las 3 coins (con cooldown)
+        if !lost && collected < KEYS_TOTAL {
+            let dx = player.pos.x - gate_pos.0;
+            let dy = player.pos.y - gate_pos.1;
+            let d = (dx*dx + dy*dy).sqrt();
+            if d < (block_size as f32 * 1.1) && last_police.elapsed() > Duration::from_millis(800) {
+                police_snd.play();
+                last_police = Instant::now();
+            }
+        }
+
+        // Si ya tienes todas las monedas, al tocar la llave (en la puerta) suena key.mp3 una sola vez
+        if !lost && !picked_key && collected >= KEYS_TOTAL {
+            let dx = player.pos.x - gate_pos.0;
+            let dy = player.pos.y - gate_pos.1;
+            let d = (dx*dx + dy*dy).sqrt();
+            if d < (block_size as f32 * 0.7) {
+                key_snd.play();
+                picked_key = true; // evita repetir sonido
+            }
+        }
 
         // RENDER STEP
         // renderiza el mundo 3D y obtiene z-buffer
@@ -218,7 +281,7 @@ let mut collected = 0usize;
         render_minimap(&mut framebuffer, &maze, block_size, &player, &coins, (16, 16), 0.15);
 
         // Ya pasamos del Image al Texture2D, ahora se encarga de dibujar el Texture2D en la ventana
-        framebuffer.swap_buffers(&mut window, &raylib_thread, collected, coins.len());
+        framebuffer.swap_buffers(&mut window, &raylib_thread, collected, KEYS_TOTAL, time_left, lost);
 
         // Tasa de refresco
         std::thread::sleep(Duration::from_millis(16));
