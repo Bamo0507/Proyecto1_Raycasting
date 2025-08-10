@@ -61,16 +61,31 @@ impl Framebuffer {
         let _ = self.color_buffer.export_image(file_path);
     }
 
-    pub fn swap_buffers(&self, window: &mut RaylibHandle, raylib_thread: &RaylibThread) {
-        if let Ok(texture) = window.load_texture_from_image(raylib_thread, &self.color_buffer) {
-            let mut renderer = window.begin_drawing(raylib_thread);
-            renderer.clear_background(Color::BLACK);
-            renderer.draw_texture(&texture, 0, 0, Color::WHITE);
-    
-            // === FPS overlay (esquina superior derecha) ===
-            let sw = renderer.get_screen_width();
-            renderer.draw_rectangle(sw - 110, 6, 100, 24, Color::new(0, 0, 0, 160));
-            renderer.draw_fps(sw - 100, 10);
-        }
+pub fn swap_buffers(&self, window: &mut RaylibHandle, raylib_thread: &RaylibThread, coins_collected: usize, coins_total: usize) {
+    if let Ok(texture) = window.load_texture_from_image(raylib_thread, &self.color_buffer) {
+        let mut renderer = window.begin_drawing(raylib_thread);
+        renderer.clear_background(Color::BLACK);
+        renderer.draw_texture(&texture, 0, 0, Color::WHITE);
+
+        // === HUD Overlay ===
+        let sw = renderer.get_screen_width();
+
+        // FPS pill (top-right)
+        renderer.draw_rectangle(sw - 110, 6, 100, 24, Color::new(0, 0, 0, 160));
+        renderer.draw_fps(sw - 100, 10);
+
+        // Coins pill (below FPS)
+        let label = format!("Coins: {}/{}", coins_collected, coins_total);
+        let text_w = renderer.measure_text(&label, 20);
+        let pill_w = (text_w + 20).max(122);
+        let pill_x = sw - pill_w - 10;
+        // Beige dorado que combina con el piso/minimapa
+        renderer.draw_rectangle(pill_x, 34, pill_w, 26, Color::new(235, 192, 121, 220));
+        // Borde tenue
+        renderer.draw_rectangle_lines(pill_x, 34, pill_w, 26, Color::new(24, 32, 56, 200));
+        // Texto en dorado intenso
+        renderer.draw_text(&label, pill_x + 10, 38, 20, Color::GOLD);
+        // === end HUD ===
     }
+}
 }

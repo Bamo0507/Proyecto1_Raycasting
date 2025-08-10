@@ -3,6 +3,7 @@ mod maze;
 mod caster;
 mod player;
 mod textures;
+mod sprites;
 
 use maze::{Maze, load_maze, find_char};
 use caster::cast_ray;
@@ -10,6 +11,7 @@ use framebuffer::Framebuffer;
 use player::{Player, process_events};
 use raylib::prelude::*;
 use crate::textures::TextureManager;
+use sprites::{SpriteManager as SpriteMgr, spawn_coins, render_sprites, pickup_coins, Sprite};
 
 fn cell_to_color(cell: char) -> Color {
     match cell {
@@ -38,7 +40,7 @@ fn draw_cell_at(
     framebuffer.fill_rect(x0, y0, block_size as i32, block_size as i32);
 }
 
-fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize, player: &Player, origin: (i32, i32), scale: f32) {
+fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize, player: &Player, coins: &Vec<Sprite>, origin: (i32, i32), scale: f32) {
     let mini = ((block_size as f32) * scale) as usize;
     let (ox, oy) = origin;
 
@@ -58,6 +60,14 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize,
         }
     }
 
+    // monedas en el minimapa (vivas)
+    for s in coins.iter().filter(|s| s.alive && s.ch == 'c') {
+        let cx = (s.x / block_size as f32) * mini as f32;
+        let cy = (s.y / block_size as f32) * mini as f32;
+        framebuffer.set_current_color(Color::GOLD);
+        framebuffer.fill_rect(ox + cx as i32 - 2, oy + cy as i32 - 2, 4, 4);
+    }
+
     // jugador en el minimapa (posición subcelda para movimiento suave)
     let pmini_x = (player.pos.x / block_size as f32) * mini as f32;
     let pmini_y = (player.pos.y / block_size as f32) * mini as f32;
@@ -71,9 +81,10 @@ fn render_world(
     block_size: usize,
     player: &Player,
     texman: &mut TextureManager,
-) {
+) -> Vec<f32> {
     let num_rays = framebuffer.width; // 1 rayo por columna
     let hh = framebuffer.height as f32 / 2.0; // half height
+    let mut zbuf = vec![f32::INFINITY; framebuffer.width as usize];
 
     // Cielo (techo frío)
     framebuffer.set_current_color(Color::SKYBLUE);
@@ -96,6 +107,7 @@ fn render_world(
         // Near plane más agresivo para evitar columnas gigantes al acercarse
         let near = 0.35 * bs; // 35% del tamaño de la celda
         if perp < near { perp = near; }
+        zbuf[i as usize] = perp;
 
         // Altura de la columna (stake) con límite superior más estricto
         let stake_height = ((bs * dist_plane) / perp).min(framebuffer.height as f32 * 0.9);
@@ -121,6 +133,7 @@ fn render_world(
             framebuffer.set_pixel(i, y as u32);
         }
     }
+    zbuf
 }
 
 pub fn main() {
@@ -157,6 +170,22 @@ pub fn main() {
         fov: PI / 2.0,
     };
 
+    // Cargar sprites
+    let mut spriteman = SpriteMgr::new().expect("Error cargando sprites");
+
+    // Posiciones aleatorias de 3 monedas
+    let mut coins: Vec<Sprite> = spawn_coins(&maze, block_size, 3);
+
+    // Posición del portal 'g' (centro de la celda)
+    let (gi, gj) = find_char(&maze, 'g').unwrap_or((maze[0].len()-2, maze.len()-2));
+    let gate_pos = (
+        (gi * block_size + block_size/2) as f32,
+        (gj * block_size + block_size/2) as f32
+    );
+
+// Contador
+let mut collected = 0usize;
+
     // Main render loop
     while !window.window_should_close() {
         // Resetea el lienzo
@@ -165,14 +194,31 @@ pub fn main() {
         // actua acorde a inputs o colisiones
         process_events(&mut player, &window, &maze, block_size);
 
+        collected = pickup_coins(&player, &mut coins, block_size);
+
         // RENDER STEP
-        // renderiza el mundo 3D
-        render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
+        // renderiza el mundo 3D y obtiene z-buffer
+        let zbuf = render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
+
+        // renderiza sprites (monedas + portal bloqueado/abierto)
+        let dist_plane = (framebuffer.width as f32 / 2.0) / (player.fov / 2.0).tan();
+        render_sprites(
+            &mut framebuffer,
+            &player,
+            &mut coins,
+            gate_pos,
+            collected,
+            &mut spriteman,
+            block_size,
+            dist_plane,
+            &zbuf,
+        );
+
         // renderiza el minimapa
-        render_minimap(&mut framebuffer, &maze, block_size, &player, (16, 16), 0.15);
+        render_minimap(&mut framebuffer, &maze, block_size, &player, &coins, (16, 16), 0.15);
 
         // Ya pasamos del Image al Texture2D, ahora se encarga de dibujar el Texture2D en la ventana
-        framebuffer.swap_buffers(&mut window, &raylib_thread);
+        framebuffer.swap_buffers(&mut window, &raylib_thread, collected, coins.len());
 
         // Tasa de refresco
         std::thread::sleep(Duration::from_millis(16));
