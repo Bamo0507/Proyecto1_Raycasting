@@ -168,6 +168,7 @@ pub fn main() {
 
     // SFX
     let police_snd = audio.new_sound("assets/police.mp3").expect("No se pudo cargar assets/police.mp3");
+    let coin_snd   = audio.new_sound("assets/coin.mp3").expect("No se pudo cargar assets/coin.mp3");
     let key_snd    = audio.new_sound("assets/key.mp3").expect("No se pudo cargar assets/key.mp3");
 
     let maze = load_maze("maze.txt");
@@ -203,7 +204,7 @@ pub fn main() {
     let mut collected = 0usize;
 
     // Timer de nivel y estado de audio/proximidad
-    let level_total = Duration::from_secs(60);
+    let level_total = Duration::from_secs(30);
     let level_start = Instant::now();
     let mut lost = false;
     let mut last_police = Instant::now() - Duration::from_millis(1000);
@@ -223,7 +224,7 @@ pub fn main() {
 
         // Sonido de coin al recoger una nueva
         if collected > prev_collected {
-            key_snd.play();
+            coin_snd.play();
             prev_collected = collected;
         }
 
