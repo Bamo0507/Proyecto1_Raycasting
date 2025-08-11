@@ -17,12 +17,22 @@ use std::time::{Duration, Instant};
 
 const KEYS_TOTAL: usize = 5;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum GameState { Welcome, LevelPicker, Playing1, Playing2, Lost, Win }
+
+struct Screens {
+    welcome: Texture2D,
+    picker:  Texture2D,
+    lost:    Texture2D,
+    win:     Texture2D,
+}
+
 fn cell_to_color(cell: char) -> Color {
     match cell {
-        '+' => Color::new(24, 32, 56, 255),   // navy oscuro
-        '-' => Color::new(0, 218, 209, 255),  // cian vibrante
-        '|' => Color::new(245, 96, 170, 255), // rosa fuerte
-        'g' => Color::new(255, 219, 88, 255), // dorado cálido
+        '+' => Color::new(90, 140, 255, 255),   // azul eléctrico (más visible)
+        '-' => Color::new(0, 218, 209, 255),    // cian vibrante
+        '|' => Color::new(255, 120, 190, 255),  // rosa brillante
+        'g' => Color::new(255, 219, 88, 255),   // dorado cálido
         _ => Color::LIGHTGRAY,
     }
 }
@@ -41,20 +51,49 @@ fn draw_cell_at(
     framebuffer.set_current_color(color);
     let x0 = ox + xo as i32;
     let y0 = oy + yo as i32;
-    framebuffer.fill_rect(x0, y0, block_size as i32, block_size as i32);
+    let pad = 1; // separación de 1px entre celdas
+    framebuffer.fill_rect(
+        x0 + pad,
+        y0 + pad,
+        (block_size as i32 - 2 * pad).max(1),
+        (block_size as i32 - 2 * pad).max(1),
+    );
+}
+
+// Dibuja una línea en el framebuffer usando Bresenham
+fn draw_line_fb(fb: &mut Framebuffer, mut x0: i32, mut y0: i32, x1: i32, y1: i32, color: Color) {
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    loop {
+        if x0 >= 0 && y0 >= 0 && (x0 as u32) < fb.width && (y0 as u32) < fb.height {
+            fb.set_current_color(color);
+            fb.set_pixel(x0 as u32, y0 as u32);
+        }
+        if x0 == x1 && y0 == y1 { break; }
+        let e2 = 2 * err;
+        if e2 >= dy { err += dy; x0 += sx; }
+        if e2 <= dx { err += dx; y0 += sy; }
+    }
 }
 
 fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize, player: &Player, coins: &Vec<Sprite>, origin: (i32, i32), scale: f32) {
     let mini = ((block_size as f32) * scale) as usize;
     let (ox, oy) = origin;
 
-    // fondo del minimapa (área completa, color visible pero semitransparente)
-    framebuffer.set_current_color(Color::new(235, 192, 121, 255));
-    framebuffer.fill_rect(ox, oy, (maze[0].len() * mini) as i32, (maze.len() * mini) as i32);
-
-    // marco del minimapa
-    framebuffer.set_current_color(Color::new(235, 192, 121, 255));
-    framebuffer.fill_rect(ox - 4, oy - 4, (maze[0].len() * mini + 8) as i32, (maze.len() * mini + 8) as i32);
+    let mw = (maze[0].len() * mini) as i32;
+    let mh = (maze.len() * mini) as i32;
+    // fondo del minimapa (teal más claro)
+    framebuffer.set_current_color(Color::new(60, 190, 180, 230));
+    framebuffer.fill_rect(ox, oy, mw, mh);
+    // borde fino (navy)
+    framebuffer.set_current_color(Color::new(24, 32, 56, 255));
+    framebuffer.fill_rect(ox - 1, oy - 1, mw + 2, 1);
+    framebuffer.fill_rect(ox - 1, oy + mh, mw + 2, 1);
+    framebuffer.fill_rect(ox - 1, oy - 1, 1, mh + 2);
+    framebuffer.fill_rect(ox + mw, oy - 1, 1, mh + 2);
 
     for (row_index, row) in maze.iter().enumerate() {
         for (col_index, &cell) in row.iter().enumerate() {
@@ -77,6 +116,7 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize,
     let pmini_y = (player.pos.y / block_size as f32) * mini as f32;
     framebuffer.set_current_color(Color::BLACK);
     framebuffer.fill_rect(ox + pmini_x as i32 - 2, oy + pmini_y as i32 - 2, 5, 5);
+
 }
 
 fn render_world(
@@ -90,11 +130,21 @@ fn render_world(
     let hh = framebuffer.height as f32 / 2.0; // half height
     let mut zbuf = vec![f32::INFINITY; framebuffer.width as usize];
 
-    // Cielo (techo frío)
-    framebuffer.set_current_color(Color::SKYBLUE);
-    framebuffer.fill_rect(0, 0, framebuffer.width as i32, hh as i32);
-    // Piso (floor color from sampled image: R=215, G=214, B=182)
-    framebuffer.set_current_color(Color::new(215, 214, 182, 255));
+    // Cielo en degradado (celeste claro -> blanco azulado)
+    let sky_top = Color::new(179, 229, 252, 255);   // celeste claro
+    let sky_bot = Color::new(224, 247, 250, 255);   // blanco azulado
+    let sky_h = hh as i32;
+    for y in 0..sky_h {
+        let t = (y as f32) / (sky_h as f32).max(1.0);
+        let r = (sky_top.r as f32 * (1.0 - t) + sky_bot.r as f32 * t) as u8;
+        let g = (sky_top.g as f32 * (1.0 - t) + sky_bot.g as f32 * t) as u8;
+        let b = (sky_top.b as f32 * (1.0 - t) + sky_bot.b as f32 * t) as u8;
+        framebuffer.set_current_color(Color::new(r, g, b, 255));
+        framebuffer.fill_rect(0, y, framebuffer.width as i32, 1);
+    }
+
+    // Piso: teal más oscuro
+    framebuffer.set_current_color(Color::new(26, 120, 112, 255));
     framebuffer.fill_rect(0, hh as i32, framebuffer.width as i32, hh as i32);
 
     // Distancia del plano de proyección (corrección por FOV)
@@ -140,6 +190,68 @@ fn render_world(
     zbuf
 }
 
+fn draw_fullscreen_screen(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    tex: &Texture2D,
+    fade_t: f32, // 0=no fade overlay, 1=negro total
+) {
+    let mut d = window.begin_drawing(thread);
+    d.clear_background(Color::BLACK);
+    d.draw_texture(tex, 0, 0, Color::WHITE);
+
+    if fade_t > 0.0 {
+        let a = (fade_t.clamp(0.0, 1.0) * 255.0) as u8;
+        d.draw_rectangle(0, 0, d.get_screen_width(), d.get_screen_height(), Color::new(0,0,0,a));
+    }
+}
+
+fn start_level(
+    which: usize,
+    block_size: usize,
+    player: &mut Player,
+    maze_out: &mut Maze,
+    coins_out: &mut Vec<Sprite>,
+    keys_total_out: &mut usize,
+) -> (/*gate_pos*/(f32,f32), /*level_start*/Instant)
+{
+    let maze_file = if which == 1 { "maze1.txt" } else { "maze2.txt" };
+    *maze_out = load_maze(maze_file);
+    *keys_total_out = if which == 1 { 5 } else { 8 };
+
+    // posicion jugador en 'p'
+    let (si, sj) = find_char(&maze_out, 'p').unwrap_or((1, 1));
+    let sx = (si * block_size + block_size / 2) as f32;
+    let sy = (sj * block_size + block_size / 2) as f32;
+    player.pos = Vector2::new(sx, sy);
+
+    // monedas
+    *coins_out = spawn_coins(&maze_out, block_size, *keys_total_out);
+
+    // gate 'g'
+    let (gi, gj) = find_char(&maze_out, 'g').unwrap_or((maze_out[0].len()-2, maze_out.len()-2));
+    let gate_pos = (
+        (gi * block_size + block_size/2) as f32,
+        (gj * block_size + block_size/2) as f32
+    );
+
+    (gate_pos, Instant::now())
+}
+
+fn pressed_enter(win: &RaylibHandle) -> bool {
+    win.is_key_pressed(KeyboardKey::KEY_ENTER)
+        || win.is_key_pressed(KeyboardKey::KEY_KP_ENTER)
+        || win.is_key_pressed(KeyboardKey::KEY_SPACE)
+}
+fn pressed_one(win: &RaylibHandle) -> bool {
+    win.is_key_pressed(KeyboardKey::KEY_ONE) || win.is_key_pressed(KeyboardKey::KEY_KP_1)
+}
+fn pressed_two(win: &RaylibHandle) -> bool {
+    win.is_key_pressed(KeyboardKey::KEY_TWO) || win.is_key_pressed(KeyboardKey::KEY_KP_2)
+}
+
+
+
 pub fn main() {
     use raylib::prelude::*;
     use std::f32::consts::PI;
@@ -151,9 +263,16 @@ pub fn main() {
 
     let (mut window, raylib_thread) = raylib::init()
         .size(window_width, window_height)
-        .title("Raycaster 3D")
+        .title("Subway Surfer")
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
+
+    let screens = Screens {
+        welcome: window.load_texture(&raylib_thread, "assets/welcome_screen.png").expect("welcome_screen"),
+        picker:  window.load_texture(&raylib_thread, "assets/level_picker.png").expect("level_picker"),
+        lost:    window.load_texture(&raylib_thread, "assets/lost.png").expect("lost"),
+        win:     window.load_texture(&raylib_thread, "assets/win.png").expect("win"),
+    };
 
     let mut framebuffer = Framebuffer::new(window_width as u32, window_height as u32);
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
@@ -171,18 +290,26 @@ pub fn main() {
     let coin_snd   = audio.new_sound("assets/coin.mp3").expect("No se pudo cargar assets/coin.mp3");
     let key_snd    = audio.new_sound("assets/key.mp3").expect("No se pudo cargar assets/key.mp3");
 
-    let maze = load_maze("maze.txt");
+    let mut maze: Maze = Vec::new();
+
+    let mut state = GameState::Welcome;
+
+    // fade: 0.0 (opaco) → 1.0 (desvanecido)
+    let mut fading = false;
+    let mut fade_t: f32 = 0.0;           // 0..1
+    let fade_speed: f32 = 3.0;           // ajusta velocidad del fade
+    let mut fade_dir: f32 = 0.0;         // +1 = fade-out, -1 = fade-in
+    let mut next_state: Option<GameState> = None;
+
+    // nivel y llaves por nivel
+    let mut keys_total: usize = 5;        // se setea al entrar a cada nivel
+    let mut current_maze_name = String::new();
 
     // Cargar texturas de paredes (wall + graffiti por tipo)
     let mut texman = TextureManager::new(&mut window, &raylib_thread).expect("Error cargando texturas");
 
-    // Posición inicial en 'p' (centro del bloque)
-    let (start_i, start_j) = find_char(&maze, 'p').unwrap_or((1, 1));
-    let start_x = (start_i * block_size + block_size / 2) as f32;
-    let start_y = (start_j * block_size + block_size / 2) as f32;
-
     let mut player = Player {
-        pos: Vector2::new(start_x, start_y),
+        pos: Vector2::new((block_size / 2) as f32, (block_size / 2) as f32), // placeholder
         a: PI / 3.0,
         fov: PI / 2.0,
     };
@@ -190,22 +317,16 @@ pub fn main() {
     // Cargar sprites
     let mut spriteman = SpriteMgr::new().expect("Error cargando sprites");
 
-    // Posiciones aleatorias de 3 monedas
-    let mut coins: Vec<Sprite> = spawn_coins(&maze, block_size, KEYS_TOTAL);
-
-    // Posición del portal 'g' (centro de la celda)
-    let (gi, gj) = find_char(&maze, 'g').unwrap_or((maze[0].len()-2, maze.len()-2));
-    let gate_pos = (
-        (gi * block_size + block_size/2) as f32,
-        (gj * block_size + block_size/2) as f32
-    );
+    // Lista de monedas (se crea al seleccionar nivel) y posición de portal
+    let mut coins: Vec<Sprite> = Vec::new();
+    let mut gate_pos: (f32, f32) = (0.0, 0.0);
 
     // Contador
     let mut collected = 0usize;
 
     // Timer de nivel y estado de audio/proximidad
-    let level_total = Duration::from_secs(30);
-    let level_start = Instant::now();
+    let mut level_total = Duration::from_secs(60);
+    let mut level_start = Instant::now();
     let mut lost = false;
     let mut last_police = Instant::now() - Duration::from_millis(1000);
     let mut prev_collected = 0usize;
@@ -213,78 +334,130 @@ pub fn main() {
 
     // Main render loop
     while !window.window_should_close() {
-        // Resetea el lienzo
-        framebuffer.clear();
+        // Música
         theme.update_stream();
 
-        // actua acorde a inputs o colisiones
+        // Fade step (global)
+        if fading {
+            let dt = window.get_frame_time();
+            fade_t = (fade_t + fade_dir * fade_speed * dt).clamp(0.0, 1.0);
+            if fade_dir > 0.0 && fade_t >= 1.0 {
+                if let Some(ns) = next_state.take() { state = ns; }
+                fade_dir = -1.0; // begin fade-in on the new screen
+            } else if fade_dir < 0.0 && fade_t <= 0.0 {
+                fading = false; fade_dir = 0.0; fade_t = 0.0;
+            }
+        }
+
+        match state {
+    GameState::Welcome => {
+        draw_fullscreen_screen(&mut window, &raylib_thread, &screens.welcome, if fading { fade_t } else { 0.0 });
+
+        if pressed_enter(&window) && !fading {
+            println!("[state] Welcome -> LevelPicker (fade)");
+            fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::LevelPicker);
+        }
+        continue;
+    }
+
+    GameState::LevelPicker => {
+        draw_fullscreen_screen(&mut window, &raylib_thread, &screens.picker, if fading { fade_t } else { 0.0 });
+
+        if pressed_one(&window) {
+            let (gp, st) = start_level(1, block_size, &mut player, &mut maze, &mut coins, &mut keys_total);
+            gate_pos = gp; level_start = st;
+            collected = 0; lost = false; prev_collected = 0; picked_key = false;
+            println!("[state] Start Level 1 | keys_total={} | coins={} cells", keys_total, coins.len());
+            if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Playing1); }
+            continue;
+        }
+        if pressed_two(&window) {
+            let (gp, st) = start_level(2, block_size, &mut player, &mut maze, &mut coins, &mut keys_total);
+            gate_pos = gp; level_start = st;
+            collected = 0; lost = false; prev_collected = 0; picked_key = false;
+            println!("[state] Start Level 2 | keys_total={} | coins={} cells", keys_total, coins.len());
+            if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Playing2); }
+            continue;
+        }
+        if window.is_key_pressed(KeyboardKey::KEY_BACKSPACE) {
+            println!("[state] LevelPicker -> Welcome (fade)");
+            if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Welcome); }
+            continue;
+        }
+        continue;
+    }
+
+    GameState::Playing1 | GameState::Playing2 => {
+        // === tu bucle de juego actual ===
+        framebuffer.clear();
+
         process_events(&mut player, &window, &maze, block_size);
 
         collected = pickup_coins(&player, &mut coins, block_size);
 
-        // Sonido de coin al recoger una nueva
+        // Sonido y bonus de tiempo al recoger nuevas coins ( +5s por coin )
         if collected > prev_collected {
+            let gained = (collected - prev_collected) as u64;
             coin_snd.play();
+            level_total += Duration::from_secs(5 * gained);
             prev_collected = collected;
         }
 
-        // Timer de nivel
         let elapsed = level_start.elapsed();
         let time_left = if elapsed >= level_total { 0 } else { (level_total - elapsed).as_secs() as u32 };
-
-        // Si se acabó el tiempo, marcar derrota y sonar policía una vez
         if time_left == 0 && !lost {
-            lost = true;
-            police_snd.play();
+            lost = true; police_snd.play();
+            println!("[state] Time up -> Lost");
+            state = GameState::Lost;
         }
 
-        // Proximidad al portal bloqueado: sirena si te acercas sin las 3 coins (con cooldown)
-        if !lost && collected < KEYS_TOTAL {
+        if !lost && collected < keys_total {
             let dx = player.pos.x - gate_pos.0;
             let dy = player.pos.y - gate_pos.1;
             let d = (dx*dx + dy*dy).sqrt();
             if d < (block_size as f32 * 1.1) && last_police.elapsed() > Duration::from_millis(800) {
-                police_snd.play();
-                last_police = Instant::now();
+                police_snd.play(); last_police = Instant::now();
             }
         }
 
-        // Si ya tienes todas las monedas, al tocar la llave (en la puerta) suena key.mp3 una sola vez
-        if !lost && !picked_key && collected >= KEYS_TOTAL {
+        // mundo, sprites, minimapa, HUD
+        let zbuf = render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
+        let dist_plane = (framebuffer.width as f32 / 2.0) / (player.fov / 2.0).tan();
+        render_sprites(&mut framebuffer, &player, &mut coins, gate_pos, collected, keys_total, &mut spriteman, block_size, dist_plane, &zbuf);
+        render_minimap(&mut framebuffer, &maze, block_size, &player, &coins, (16, 16), 0.15);
+        framebuffer.swap_buffers(&mut window, &raylib_thread, collected, keys_total, time_left, lost);
+
+        // ¿ganaste? (tocar la key en la puerta con 5/8)
+        if collected >= keys_total {
             let dx = player.pos.x - gate_pos.0;
             let dy = player.pos.y - gate_pos.1;
             let d = (dx*dx + dy*dy).sqrt();
             if d < (block_size as f32 * 0.7) {
                 key_snd.play();
-                picked_key = true; // evita repetir sonido
+                println!("[state] Gate reached with all keys -> Win");
+                state = GameState::Win;
             }
         }
+        continue;
+    }
 
-        // RENDER STEP
-        // renderiza el mundo 3D y obtiene z-buffer
-        let zbuf = render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
+    GameState::Lost => {
+        draw_fullscreen_screen(&mut window, &raylib_thread, &screens.lost, if fading { fade_t } else { 0.0 });
+        if pressed_enter(&window) {
+            println!("[state] Lost -> LevelPicker (fade)");
+            if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::LevelPicker); }
+        }
+        continue;
+    }
 
-        // renderiza sprites (monedas + portal bloqueado/abierto)
-        let dist_plane = (framebuffer.width as f32 / 2.0) / (player.fov / 2.0).tan();
-        render_sprites(
-            &mut framebuffer,
-            &player,
-            &mut coins,
-            gate_pos,
-            collected,
-            &mut spriteman,
-            block_size,
-            dist_plane,
-            &zbuf,
-        );
-
-        // renderiza el minimapa
-        render_minimap(&mut framebuffer, &maze, block_size, &player, &coins, (16, 16), 0.15);
-
-        // Ya pasamos del Image al Texture2D, ahora se encarga de dibujar el Texture2D en la ventana
-        framebuffer.swap_buffers(&mut window, &raylib_thread, collected, KEYS_TOTAL, time_left, lost);
-
-        // Tasa de refresco
-        std::thread::sleep(Duration::from_millis(16));
+    GameState::Win => {
+        draw_fullscreen_screen(&mut window, &raylib_thread, &screens.win, if fading { fade_t } else { 0.0 });
+        if pressed_enter(&window) {
+            println!("[state] Win -> Welcome (fade)");
+            if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Welcome); }
+        }
+        continue;
+    }
+}
     }
 }

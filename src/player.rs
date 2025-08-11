@@ -12,12 +12,14 @@ pub struct Player {
 // Inputs, movimientos y salidas
 // Raylib es lo que permite hacer el manejo de lectura del teclado
 pub fn process_events(player: &mut Player, rl: &RaylibHandle, maze: &Maze, block_size: usize) {
-    const MOVE_SPEED: f32 = 8.0;           // velocidad de avance/retroceso y strafe
-    const MOUSE_SENS: f32 = 0.005;         // sensibilidad de rotación por mouse (solo horizontal)
-
-    // --- Rotación SOLO con el mouse ---
+    const MOVE_SPEED: f32 = 8.0;        
+    const MOUSE_SENS: f32 = 0.006;         
+    const ROT_SPEED: f32 = std::f32::consts::PI / 60.0; // rotación con teclado (K/L)
+    // --- Rotación: mouse + teclado (K izquierda, L derecha) ---
     let md = rl.get_mouse_delta();
-    player.a += md.x * MOUSE_SENS; // mover mouse a la derecha => gira a la derecha
+    player.a += md.x * MOUSE_SENS; // mouse horizontal
+    if rl.is_key_down(KeyboardKey::KEY_K) { player.a += ROT_SPEED; } // gira a la izquierda
+    if rl.is_key_down(KeyboardKey::KEY_L) { player.a -= ROT_SPEED; } // gira a la derecha
 
     // Normaliza el ángulo a [-PI, PI] para evitar overflow con el tiempo
     if player.a >  PI { player.a -= 2.0 * PI; }

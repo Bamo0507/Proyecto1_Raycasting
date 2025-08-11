@@ -143,6 +143,7 @@ pub fn render_sprites(
     sprites: &mut [Sprite],
     gate_pos: (f32, f32),
     got_coins: usize,
+    needed: usize,
     sm: &mut SpriteManager,
     block_size: usize,
     dist_plane: f32,
@@ -155,7 +156,7 @@ pub fn render_sprites(
         x: gate_pos.0,
         y: gate_pos.1,
         size: block_size as f32 * 1.0,
-        ch: if got_coins >= 5 { 'Q' } else { 'P' },
+        ch: if got_coins >= needed { 'Q' } else { 'P' },
         alive: true,
     });
 
