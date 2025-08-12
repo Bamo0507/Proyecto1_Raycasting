@@ -14,9 +14,9 @@ El motor utiliza **ray-casting** para renderizar las paredes, texturas con *graf
 * **Esc** – Cerrar el juego.
 
 ## Demostración de funcionamiento del juego
-<video src="./gameplay.mp4" controls width="720" playsinline poster="./captures/gameplay_poster.png"></video>
+[Ver gameplay](./gameplay.mp4)
 
 ## Demostración de giro con mouse
-<video src="./mouse_function.mp4" controls width="720" playsinline poster="./captures/mouse_poster.png"></video>
+[Ver giro con mouse](./mouse_function.mp4)
 
 
