@@ -14,16 +14,16 @@ use crate::textures::TextureManager;
 use sprites::{SpriteManager as SpriteMgr, spawn_coins, render_sprites, pickup_coins, Sprite};
 use std::time::{Instant};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum GameState { Welcome, LevelPicker, Playing1, Playing2, Lost, Win }
 
 struct Screens {
     welcome: Texture2D,
-    picker:  Texture2D,
-    lost:    Texture2D,
-    win:     Texture2D,
+    picker: Texture2D,
+    lost: Texture2D,
+    win: Texture2D,
 }
 
+// Colores para el minimap
 fn cell_to_color(cell: char) -> Color {
     match cell {
         '+' => Color::new(90, 140, 255, 255),   // azul eléctrico (más visible)
@@ -34,6 +34,7 @@ fn cell_to_color(cell: char) -> Color {
     }
 }
 
+// Dibujar una celda en el minimap
 fn draw_cell_at(
     framebuffer: &mut Framebuffer,
     ox: i32,
@@ -48,7 +49,7 @@ fn draw_cell_at(
     framebuffer.set_current_color(color);
     let x0 = ox + xo as i32;
     let y0 = oy + yo as i32;
-    let pad = 1; // separación de 1px entre celdas
+    let pad = 1; // separación de 1px entre celdas, como un padding
     framebuffer.fill_rect(
         x0 + pad,
         y0 + pad,
@@ -57,6 +58,7 @@ fn draw_cell_at(
     );
 }
 
+//Mapa 2D del laberinto
 fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize, player: &Player, coins: &Vec<Sprite>, origin: (i32, i32), scale: f32) {
     let mini = ((block_size as f32) * scale) as usize;
     let (ox, oy) = origin;
@@ -104,7 +106,7 @@ fn render_world(
     player: &Player,
     texman: &mut TextureManager,
 ) -> Vec<f32> {
-    let num_rays = framebuffer.width; // 1 rayo por columna
+    let num_rays = framebuffer.width; // 1 rayo x col de framebuffer
     let hh = framebuffer.height as f32 / 2.0; // half height
     let mut zbuf = vec![f32::INFINITY; framebuffer.width as usize];
 
@@ -121,11 +123,11 @@ fn render_world(
         framebuffer.fill_rect(0, y, framebuffer.width as i32, 1);
     }
 
-    // Piso: teal más oscuro
+    // Piso color teal oscuro
     framebuffer.set_current_color(Color::new(26, 120, 112, 255));
     framebuffer.fill_rect(0, hh as i32, framebuffer.width as i32, hh as i32);
 
-    // Distancia del plano de proyección (corrección por FOV)
+    // Distancia del plano de proyección
     let dist_plane = (framebuffer.width as f32 / 2.0) / (player.field_of_view / 2.0).tan();
     let bs = block_size as f32;
 
@@ -134,14 +136,13 @@ fn render_world(
         let a = player.angle - (player.field_of_view / 2.0) + (player.field_of_view * current_ray);
         let hit = cast_ray(framebuffer, maze, player, a, block_size, false);
 
-        // Corrección de "fisheye": distancia perpendicular
+        // Corrección de "fisheye"
         let mut perp = hit.hit_distance * (a - player.angle).cos().abs();
-        // Near plane más agresivo para evitar columnas gigantes al acercarse
         let near = 0.35 * bs; // 35% del tamaño de la celda
         if perp < near { perp = near; }
         zbuf[i as usize] = perp;
 
-        // Altura de la columna (stake) con límite superior más estricto
+        // Altura de la columna de la estaca
         let stake_height = ((bs * dist_plane) / perp).min(framebuffer.height as f32 * 0.9);
         let stake_top = (hh - stake_height * 0.5) as i32;
         let stake_bottom = (hh + stake_height * 0.5) as i32;
@@ -191,7 +192,7 @@ fn start_level(
     maze_out: &mut Maze,
     coins_out: &mut Vec<Sprite>,
     keys_total_out: &mut usize,
-) -> (/*gate_pos*/(f32,f32), /*level_start*/Instant)
+) -> ((f32,f32), Instant)
 {
     let maze_file = if which == 1 { "maze1.txt" } else { "maze2.txt" };
     *maze_out = load_maze(maze_file);
@@ -206,7 +207,7 @@ fn start_level(
     // monedas
     *coins_out = spawn_coins(&maze_out, block_size, *keys_total_out);
 
-    // gate 'g'
+    // salida, policia o llave dependiendo de momento
     let (gi, gj) = find_char(&maze_out, 'g').unwrap_or((maze_out[0].len()-2, maze_out.len()-2));
     let gate_pos = (
         (gi * block_size + block_size/2) as f32,
@@ -216,14 +217,18 @@ fn start_level(
     (gate_pos, Instant::now())
 }
 
+// Que deje continuar con space o enter
 fn pressed_enter(win: &RaylibHandle) -> bool {
     win.is_key_pressed(KeyboardKey::KEY_ENTER)
         || win.is_key_pressed(KeyboardKey::KEY_KP_ENTER)
         || win.is_key_pressed(KeyboardKey::KEY_SPACE)
 }
+
+// Manejar evento de seleccion de nivel 1
 fn pressed_one(win: &RaylibHandle) -> bool {
     win.is_key_pressed(KeyboardKey::KEY_ONE) || win.is_key_pressed(KeyboardKey::KEY_KP_1)
 }
+// Manejar evento de seleccion de nivel 2
 fn pressed_two(win: &RaylibHandle) -> bool {
     win.is_key_pressed(KeyboardKey::KEY_TWO) || win.is_key_pressed(KeyboardKey::KEY_KP_2)
 }
@@ -247,18 +252,17 @@ pub fn main() {
 
     let screens = Screens {
         welcome: window.load_texture(&raylib_thread, "assets/welcome_screen.png").expect("welcome_screen"),
-        picker:  window.load_texture(&raylib_thread, "assets/level_picker.png").expect("level_picker"),
-        lost:    window.load_texture(&raylib_thread, "assets/lost.png").expect("lost"),
-        win:     window.load_texture(&raylib_thread, "assets/win.png").expect("win"),
+        picker: window.load_texture(&raylib_thread, "assets/level_picker.png").expect("level_picker"),
+        lost: window.load_texture(&raylib_thread, "assets/lost.png").expect("lost"),
+        win: window.load_texture(&raylib_thread, "assets/win.png").expect("win"),
     };
 
     let mut framebuffer = Framebuffer::new(window_width as u32, window_height as u32);
     framebuffer.set_background_color(Color::new(50, 50, 100, 255));
 
-    // --- Audio (raylib-rs 5.5.1) ---
     let audio = RaylibAudio::init_audio_device().expect("No se pudo iniciar el audio");
 
-    // Música de fondo (stream)
+    // Música de fondo
     let theme = audio.new_music("assets/theme.mp3").expect("No se pudo cargar assets/theme.mp3");
     theme.set_volume(0.6);
     theme.play_stream();
@@ -272,17 +276,17 @@ pub fn main() {
 
     let mut state = GameState::Welcome;
 
-    // fade: 0.0 (opaco) → 1.0 (desvanecido)
+    // Fading effect para cambio de screens
     let mut fading = false;
-    let mut fade_t: f32 = 0.0;           // 0..1
-    let fade_speed: f32 = 3.0;           // ajusta velocidad del fade
-    let mut fade_dir: f32 = 0.0;         // +1 = fade-out, -1 = fade-in
+    let mut fade_t: f32 = 0.0;         
+    let fade_speed: f32 = 3.0;           
+    let mut fade_dir: f32 = 0.0;        
     let mut next_state: Option<GameState> = None;
 
     // nivel y llaves por nivel
-    let mut keys_total: usize = 5;// se setea al entrar a cada nivel
+    let mut coins_total: usize = 5;
 
-    // Cargar texturas de paredes (wall + graffiti por tipo)
+    // Cargar texturas de paredes (wall + graffiti)
     let mut texman = TextureManager::new(&mut window, &raylib_thread).expect("Error cargando texturas");
 
     let mut player = Player {
@@ -311,7 +315,7 @@ pub fn main() {
 
     // Main render loop
     while !window.window_should_close() {
-        // Música
+        // Música - siempre sonando
         theme.update_stream();
 
         // Fade step (global)
@@ -327,9 +331,9 @@ pub fn main() {
         }
 
         match state {
+
     GameState::Welcome => {
         draw_fullscreen_screen(&mut window, &raylib_thread, &screens.welcome, if fading { fade_t } else { 0.0 });
-
         if pressed_enter(&window) && !fading {
             println!("[state] Welcome -> LevelPicker (fade)");
             fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::LevelPicker);
@@ -339,20 +343,19 @@ pub fn main() {
 
     GameState::LevelPicker => {
         draw_fullscreen_screen(&mut window, &raylib_thread, &screens.picker, if fading { fade_t } else { 0.0 });
-
         if pressed_one(&window) {
-            let (gp, st) = start_level(1, block_size, &mut player, &mut maze, &mut coins, &mut keys_total);
+            let (gp, st) = start_level(1, block_size, &mut player, &mut maze, &mut coins, &mut coins_total);
             gate_pos = gp; level_start = st;
             _collected = 0; lost = false; prev_collected = 0; _picked_key = false;
-            println!("[state] Start Level 1 | keys_total={} | coins={} cells", keys_total, coins.len());
+            println!("[state] Start Level 1 | coins_total={} | coins={} cells", coins_total, coins.len());
             if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Playing1); }
             continue;
         }
         if pressed_two(&window) {
-            let (gp, st) = start_level(2, block_size, &mut player, &mut maze, &mut coins, &mut keys_total);
+            let (gp, st) = start_level(2, block_size, &mut player, &mut maze, &mut coins, &mut coins_total);
             gate_pos = gp; level_start = st;
             _collected = 0; lost = false; prev_collected = 0; _picked_key = false;
-            println!("[state] Start Level 2 | keys_total={} | coins={} cells", keys_total, coins.len());
+            println!("[state] Start Level 2 | coins_total={} | coins={} cells", coins_total, coins.len());
             if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Playing2); }
             continue;
         }
@@ -365,14 +368,13 @@ pub fn main() {
     }
 
     GameState::Playing1 | GameState::Playing2 => {
-        // === tu bucle de juego actual ===
+        // Render loop
         framebuffer.clear();
 
         process_events(&mut player, &window, &maze, block_size);
 
         let _collected = pickup_coins(&player, &mut coins, block_size);
 
-        // Sonido y bonus de tiempo al recoger nuevas coins ( +5s por coin )
         if _collected > prev_collected {
             let gained = (_collected - prev_collected) as u64;
             coin_snd.play();
@@ -388,7 +390,7 @@ pub fn main() {
             state = GameState::Lost;
         }
 
-        if !lost && _collected < keys_total {
+        if !lost && _collected < coins_total {
             let dx = player.position.x - gate_pos.0;
             let dy = player.position.y - gate_pos.1;
             let d = (dx*dx + dy*dy).sqrt();
@@ -400,12 +402,12 @@ pub fn main() {
         // mundo, sprites, minimapa, HUD
         let zbuf = render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
         let dist_plane = (framebuffer.width as f32 / 2.0) / (player.field_of_view / 2.0).tan();
-        render_sprites(&mut framebuffer, &player, &mut coins, gate_pos, _collected, keys_total, &mut spriteman, block_size, dist_plane, &zbuf);
+        render_sprites(&mut framebuffer, &player, &mut coins, gate_pos, _collected, coins_total, &mut spriteman, block_size, dist_plane, &zbuf);
         render_minimap(&mut framebuffer, &maze, block_size, &player, &coins, (16, 16), 0.15);
-        framebuffer.swap_buffers(&mut window, &raylib_thread, _collected, keys_total, time_left);
+        framebuffer.swap_buffers(&mut window, &raylib_thread, _collected, coins_total, time_left);
 
-        // ¿ganaste? (tocar la key en la puerta con 5/8)
-        if _collected >= keys_total {
+        // Tocar llave para ganar
+        if _collected >= coins_total {
             let dx = player.position.x - gate_pos.0;
             let dy = player.position.y - gate_pos.1;
             let d = (dx*dx + dy*dy).sqrt();
