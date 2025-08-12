@@ -15,7 +15,7 @@ El motor utiliza **ray-casting** para renderizar las paredes, texturas con *graf
 
 ## Demostración de funcionamiento de juego
 
-[Demo de juego](./gameplay.mov)
+[Demo de juego](./gameplay.mp4)
 
 
 
