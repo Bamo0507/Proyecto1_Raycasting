@@ -15,12 +15,12 @@ El motor utiliza **ray-casting** para renderizar las paredes, texturas con *graf
 
 ## Demostración de funcionamiento de juego
 
-[Demo de juego](./gameplay.mp4)
+![Demo de juego](./gameplay.mp4)
 
 
 
 ## Desmotracion de funcionameinto de giro con mouse
 
-[Funcionamiento de giro](./mouse_function.mp4)
+![Funcionamiento de giro](./mouse_function.mp4)
 
 
