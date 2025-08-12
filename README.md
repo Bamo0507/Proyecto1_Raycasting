@@ -13,14 +13,10 @@ El motor utiliza **ray-casting** para renderizar las paredes, texturas con *graf
 * **1 / 2** – Elegir nivel en la pantalla de selección.
 * **Esc** – Cerrar el juego.
 
-## Demostración de funcionamiento de juego
+## Demostración de funcionamiento del juego
+<video src="./gameplay.mp4" controls width="720" playsinline poster="./captures/gameplay_poster.png"></video>
 
-![Demo de juego](./gameplay.mp4)
-
-
-
-## Desmotracion de funcionameinto de giro con mouse
-
-![Funcionamiento de giro](./mouse_function.mp4)
+## Demostración de giro con mouse
+<video src="./mouse_function.mp4" controls width="720" playsinline poster="./captures/mouse_poster.png"></video>
 
 
