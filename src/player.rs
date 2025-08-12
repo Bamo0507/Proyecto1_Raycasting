@@ -3,71 +3,85 @@ use std::f32::consts::PI;
 use crate::maze::{Maze, is_walkable};
 
 pub struct Player {
-    pub pos: Vector2,
-    pub a: f32,
-    pub fov: f32,
+    pub position: Vector2,  
+    pub angle: f32,         
+    pub field_of_view: f32, 
 }
 
-// Manejo de logica del jugador
-// Inputs, movimientos y salidas
-// Raylib es lo que permite hacer el manejo de lectura del teclado
-pub fn process_events(player: &mut Player, rl: &RaylibHandle, maze: &Maze, block_size: usize) {
-    const MOVE_SPEED: f32 = 8.0;        
-    const MOUSE_SENS: f32 = 0.006;         
-    const ROT_SPEED: f32 = std::f32::consts::PI / 60.0; // rotación con teclado (K/L)
-    // --- Rotación: mouse + teclado (K izquierda, L derecha) ---
-    let md = rl.get_mouse_delta();
-    player.a += md.x * MOUSE_SENS; // mouse horizontal
-    if rl.is_key_down(KeyboardKey::KEY_K) { player.a += ROT_SPEED; } // gira a la izquierda
-    if rl.is_key_down(KeyboardKey::KEY_L) { player.a -= ROT_SPEED; } // gira a la derecha
+/// Procesa los eventos de entrada del teclado y mouse para controlar al jugador
+/// Maneja la rotación con el mouse y teclas K/L, y movimiento con WASD, esto lo hace raylib al parecer jaja
+pub fn process_events(player: &mut Player, raylib_handle: &RaylibHandle, maze: &Maze, block_size: usize) {
+    const MOVEMENT_SPEED: f32 = 8.0;
+    const MOUSE_SENSITIVITY: f32 = 0.006;
+    const KEYBOARD_ROTATION_SPEED: f32 = std::f32::consts::PI / 60.0; // k/l para girar
+    
+    // Rotación con mouse
+    let mouse_delta = raylib_handle.get_mouse_delta();
+    player.angle += mouse_delta.x * MOUSE_SENSITIVITY;
+    
+    // Rotación con teclado
+    if raylib_handle.is_key_down(KeyboardKey::KEY_L) { 
+        player.angle += KEYBOARD_ROTATION_SPEED;
+    }
+    if raylib_handle.is_key_down(KeyboardKey::KEY_K) { 
+        player.angle -= KEYBOARD_ROTATION_SPEED;
+    }
 
-    // Normaliza el ángulo a [-PI, PI] para evitar overflow con el tiempo
-    if player.a >  PI { player.a -= 2.0 * PI; }
-    if player.a < -PI { player.a += 2.0 * PI; }
+    // Normaliza eangulo
+    player.angle = player.angle.rem_euclid(2.0 * PI);
+    if player.angle > PI { player.angle -= 2.0 * PI; }
 
-    // --- Movimiento: W (adelante), S (atrás), A (izquierda/strafe), D (derecha/strafe) ---
-    let mut move_step = 0.0;   // adelante/atrás a lo largo de la vista
-    let mut strafe_step = 0.0; // izquierda/derecha perpendicular a la vista
+    let mut forward_movement = 0.0;   // Movimiento hacia adelante/atrás
+    let mut strafe_movement = 0.0;    // Movimiento lateral
 
-    if rl.is_key_down(KeyboardKey::KEY_W) { move_step   += MOVE_SPEED; }
-    if rl.is_key_down(KeyboardKey::KEY_S) { move_step   -= MOVE_SPEED; }
-    if rl.is_key_down(KeyboardKey::KEY_D) { strafe_step -= MOVE_SPEED; } // derecha
-    if rl.is_key_down(KeyboardKey::KEY_A) { strafe_step += MOVE_SPEED; } // izquierda
+    // Controles WASD
+    if raylib_handle.is_key_down(KeyboardKey::KEY_W) { forward_movement += MOVEMENT_SPEED; }
+    if raylib_handle.is_key_down(KeyboardKey::KEY_S) { forward_movement -= MOVEMENT_SPEED; }
+    if raylib_handle.is_key_down(KeyboardKey::KEY_D) { strafe_movement -= MOVEMENT_SPEED; }
+    if raylib_handle.is_key_down(KeyboardKey::KEY_A) { strafe_movement += MOVEMENT_SPEED; }
 
-    if move_step != 0.0 || strafe_step != 0.0 {
-        // Vectores base
-        let forward_x = player.a.cos();
-        let forward_y = player.a.sin();
-        let right_x   =  player.a.sin();   // derecha = +90° de forward
-        let right_y   = -player.a.cos();
+    if forward_movement != 0.0 || strafe_movement != 0.0 {
+        // Vectores de dirección
+        let forward_direction_x = player.angle.cos();
+        let forward_direction_y = player.angle.sin();
+        let right_direction_x = player.angle.sin();   
+        let right_direction_y = -player.angle.cos();
 
-        // Componer desplazamiento deseado
-        let mut step_x = move_step * forward_x + strafe_step * right_x;
-        let mut step_y = move_step * forward_y + strafe_step * right_y;
+        // Calcular el vector de movimiento combinado, por si hay movimiento en ambos ejes
+        let mut movement_x = forward_movement * forward_direction_x + strafe_movement * right_direction_x;
+        let mut movement_y = forward_movement * forward_direction_y + strafe_movement * right_direction_y;
 
-        // Normalizar para que diagonal no sea más rápida que MOVE_SPEED
-        let mag = (step_x * step_x + step_y * step_y).sqrt();
-        if mag > MOVE_SPEED && mag > 0.0 {
-            let k = MOVE_SPEED / mag;
-            step_x *= k;
-            step_y *= k;
+        // Normalizar para que el movimiento diagonal no sea más rápido
+        let movement_magnitude = (movement_x * movement_x + movement_y * movement_y).sqrt();
+        if movement_magnitude > MOVEMENT_SPEED && movement_magnitude > 0.0 {
+            let normalization_factor = MOVEMENT_SPEED / movement_magnitude;
+            movement_x *= normalization_factor;
+            movement_y *= normalization_factor;
         }
 
-        // Colisiones por ejes (permite deslizarse por paredes)
-        // 1) intento en X
-        let try_x = Vector2 { x: player.pos.x + step_x, y: player.pos.y };
-        let ix = (try_x.x.max(0.0) as usize) / block_size;
-        let jx = (try_x.y.max(0.0) as usize) / block_size;
-        if jx < maze.len() && ix < maze[jx].len() && is_walkable(maze[jx][ix]) {
-            player.pos.x = try_x.x;
+        // Detección de colisiones
+        // Intento de movimiento en X
+        let new_position_x = Vector2 { 
+            x: player.position.x + movement_x, 
+            y: player.position.y 
+        };
+        let grid_x = (new_position_x.x.max(0.0) as usize) / block_size;
+        let grid_y = (new_position_x.y.max(0.0) as usize) / block_size;
+        
+        if grid_y < maze.len() && grid_x < maze[grid_y].len() && is_walkable(maze[grid_y][grid_x]) {
+            player.position.x = new_position_x.x;
         }
 
-        // 2) intento en Y
-        let try_y = Vector2 { x: player.pos.x, y: player.pos.y + step_y };
-        let iy = (try_y.x.max(0.0) as usize) / block_size;
-        let jy = (try_y.y.max(0.0) as usize) / block_size;
-        if jy < maze.len() && iy < maze[jy].len() && is_walkable(maze[jy][iy]) {
-            player.pos.y = try_y.y;
+        // Intento de movimiento en Y
+        let new_position_y = Vector2 { 
+            x: player.position.x, 
+            y: player.position.y + movement_y 
+        };
+        let grid_x = (new_position_y.x.max(0.0) as usize) / block_size;
+        let grid_y = (new_position_y.y.max(0.0) as usize) / block_size;
+        
+        if grid_y < maze.len() && grid_x < maze[grid_y].len() && is_walkable(maze[grid_y][grid_x]) {
+            player.position.y = new_position_y.y;
         }
     }
 }

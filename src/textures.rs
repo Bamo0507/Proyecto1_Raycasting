@@ -2,8 +2,7 @@ use raylib::prelude::*;
 use std::collections::HashMap;
 
 pub struct TextureManager {
-    images: HashMap<char, Image>,       // Composed images for CPU sampling
-    textures: HashMap<char, Texture2D>, // GPU textures (optional for future use)
+    images: HashMap<char, Image>,
 }
 
 impl TextureManager {
@@ -31,7 +30,7 @@ impl TextureManager {
             textures.insert(ch, tex);
         }
 
-        // Fallback: usa la textura de '-' cuando pidan un char no definido (clave '#')
+        // x default se usa - si hay un simbolo no definido
         if let Some(img) = images.get(&'-').cloned() {
             let tex = rl
                 .load_texture_from_image(thread, &img)
@@ -40,10 +39,10 @@ impl TextureManager {
             textures.insert('#', tex);
         }
 
-        Ok(Self { images, textures })
+        Ok(Self { images })
     }
 
-    /// Tamaño del Image asociado a `ch` (o del fallback '#')
+    // Obtener el tamaño de la imagen
     pub fn get_image_size(&self, ch: char) -> (u32, u32) {
         if let Some(img) = self.images.get(&ch) {
             (img.width as u32, img.height as u32)
@@ -54,7 +53,7 @@ impl TextureManager {
         }
     }
 
-    /// Devuelve el color en (tx, ty) del Image mapeado a `ch` (o fallback), mutable version using get_color
+    // Devuelve el color en (tx, ty) del Image mapeado al simbolo
     pub fn get_pixel_color_mut(&mut self, ch: char, tx: u32, ty: u32) -> Color {
         let key = if self.images.contains_key(&ch) { ch } else { '#' };
         if let Some(img) = self.images.get_mut(&key) {
@@ -66,15 +65,9 @@ impl TextureManager {
         }
         Color::WHITE
     }
-
-    /// Acceso opcional a la textura de GPU (por si la usas después)
-    #[allow(dead_code)]
-    pub fn get_texture(&self, ch: char) -> Option<&Texture2D> {
-        self.textures.get(&ch)
-    }
 }
 
-/// Alpha blend: out = overlay.a * overlay + (1 - overlay.a) * base
+// Metodo para poder tener wall de base y el graffiti encima (ambas son 256x256)
 fn compose_overlay(base: &mut Image, overlay: &mut Image) -> Result<Image, String> {
     let bw = base.width as i32; let bh = base.height as i32;
     if overlay.width != base.width || overlay.height != base.height {

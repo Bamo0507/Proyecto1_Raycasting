@@ -12,10 +12,7 @@ use player::{Player, process_events};
 use raylib::prelude::*;
 use crate::textures::TextureManager;
 use sprites::{SpriteManager as SpriteMgr, spawn_coins, render_sprites, pickup_coins, Sprite};
-use raylib::core::audio::{RaylibAudio, Sound, Music};
-use std::time::{Duration, Instant};
-
-const KEYS_TOTAL: usize = 5;
+use std::time::{Instant};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum GameState { Welcome, LevelPicker, Playing1, Playing2, Lost, Win }
@@ -60,25 +57,6 @@ fn draw_cell_at(
     );
 }
 
-// Dibuja una línea en el framebuffer usando Bresenham
-fn draw_line_fb(fb: &mut Framebuffer, mut x0: i32, mut y0: i32, x1: i32, y1: i32, color: Color) {
-    let dx = (x1 - x0).abs();
-    let dy = -(y1 - y0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if x0 >= 0 && y0 >= 0 && (x0 as u32) < fb.width && (y0 as u32) < fb.height {
-            fb.set_current_color(color);
-            fb.set_pixel(x0 as u32, y0 as u32);
-        }
-        if x0 == x1 && y0 == y1 { break; }
-        let e2 = 2 * err;
-        if e2 >= dy { err += dy; x0 += sx; }
-        if e2 <= dx { err += dx; y0 += sy; }
-    }
-}
-
 fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize, player: &Player, coins: &Vec<Sprite>, origin: (i32, i32), scale: f32) {
     let mini = ((block_size as f32) * scale) as usize;
     let (ox, oy) = origin;
@@ -104,16 +82,16 @@ fn render_minimap(framebuffer: &mut Framebuffer, maze: &Maze, block_size: usize,
     }
 
     // monedas en el minimapa (vivas)
-    for s in coins.iter().filter(|s| s.alive && s.ch == 'c') {
-        let cx = (s.x / block_size as f32) * mini as f32;
-        let cy = (s.y / block_size as f32) * mini as f32;
+    for s in coins.iter().filter(|s| s.is_active && s.sprite_type == 'c') {
+        let cx = (s.world_x / block_size as f32) * mini as f32;
+        let cy = (s.world_y / block_size as f32) * mini as f32;
         framebuffer.set_current_color(Color::GOLD);
         framebuffer.fill_rect(ox + cx as i32 - 2, oy + cy as i32 - 2, 4, 4);
     }
 
     // jugador en el minimapa (posición subcelda para movimiento suave)
-    let pmini_x = (player.pos.x / block_size as f32) * mini as f32;
-    let pmini_y = (player.pos.y / block_size as f32) * mini as f32;
+    let pmini_x = (player.position.x / block_size as f32) * mini as f32;
+    let pmini_y = (player.position.y / block_size as f32) * mini as f32;
     framebuffer.set_current_color(Color::BLACK);
     framebuffer.fill_rect(ox + pmini_x as i32 - 2, oy + pmini_y as i32 - 2, 5, 5);
 
@@ -148,16 +126,16 @@ fn render_world(
     framebuffer.fill_rect(0, hh as i32, framebuffer.width as i32, hh as i32);
 
     // Distancia del plano de proyección (corrección por FOV)
-    let dist_plane = (framebuffer.width as f32 / 2.0) / (player.fov / 2.0).tan();
+    let dist_plane = (framebuffer.width as f32 / 2.0) / (player.field_of_view / 2.0).tan();
     let bs = block_size as f32;
 
     for i in 0..num_rays {
         let current_ray = i as f32 / num_rays as f32; // [0,1)
-        let a = player.a - (player.fov / 2.0) + (player.fov * current_ray);
+        let a = player.angle - (player.field_of_view / 2.0) + (player.field_of_view * current_ray);
         let hit = cast_ray(framebuffer, maze, player, a, block_size, false);
 
         // Corrección de "fisheye": distancia perpendicular
-        let mut perp = hit.distance * (a - player.a).cos().abs();
+        let mut perp = hit.hit_distance * (a - player.angle).cos().abs();
         // Near plane más agresivo para evitar columnas gigantes al acercarse
         let near = 0.35 * bs; // 35% del tamaño de la celda
         if perp < near { perp = near; }
@@ -169,11 +147,11 @@ fn render_world(
         let stake_bottom = (hh + stake_height * 0.5) as i32;
 
         // Dimensiones de la textura para el tipo de pared impactada
-        let (tw_u, th_u) = texman.get_image_size(hit.impact);
+        let (tw_u, th_u) = texman.get_image_size(hit.wall_type);
         let tw = tw_u as i32; let th = th_u as i32;
 
         // Coordenada X dentro de la textura usando fracción robusta provista por el raycast
-        let tex_x = (hit.tex_frac * tw as f32).clamp(0.0, tw as f32 - 1.0) as i32;
+        let tex_x = (hit.texture_coord * tw as f32).clamp(0.0, tw as f32 - 1.0) as i32;
 
         // Pintar la columna muestreando la textura y sombreando por distancia
         let y_start = stake_top.max(0);
@@ -182,7 +160,7 @@ fn render_world(
             let v = (y as f32 - y_start as f32) / ((y_end - y_start).max(1) as f32);
             let tex_y = (v * th as f32).clamp(0.0, th as f32 - 1.0) as i32;
 
-            let c = texman.get_pixel_color_mut(hit.impact, tex_x as u32, tex_y as u32);
+            let c = texman.get_pixel_color_mut(hit.wall_type, tex_x as u32, tex_y as u32);
             framebuffer.set_current_color(c);
             framebuffer.set_pixel(i, y as u32);
         }
@@ -223,7 +201,7 @@ fn start_level(
     let (si, sj) = find_char(&maze_out, 'p').unwrap_or((1, 1));
     let sx = (si * block_size + block_size / 2) as f32;
     let sy = (sj * block_size + block_size / 2) as f32;
-    player.pos = Vector2::new(sx, sy);
+    player.position = Vector2::new(sx, sy);
 
     // monedas
     *coins_out = spawn_coins(&maze_out, block_size, *keys_total_out);
@@ -302,16 +280,15 @@ pub fn main() {
     let mut next_state: Option<GameState> = None;
 
     // nivel y llaves por nivel
-    let mut keys_total: usize = 5;        // se setea al entrar a cada nivel
-    let mut current_maze_name = String::new();
+    let mut keys_total: usize = 5;// se setea al entrar a cada nivel
 
     // Cargar texturas de paredes (wall + graffiti por tipo)
     let mut texman = TextureManager::new(&mut window, &raylib_thread).expect("Error cargando texturas");
 
     let mut player = Player {
-        pos: Vector2::new((block_size / 2) as f32, (block_size / 2) as f32), // placeholder
-        a: PI / 3.0,
-        fov: PI / 2.0,
+        position: Vector2::new((block_size / 2) as f32, (block_size / 2) as f32), // placeholder
+        angle: PI / 3.0,
+        field_of_view: PI / 2.0,
     };
 
     // Cargar sprites
@@ -322,7 +299,7 @@ pub fn main() {
     let mut gate_pos: (f32, f32) = (0.0, 0.0);
 
     // Contador
-    let mut collected = 0usize;
+    let mut _collected = 0usize;
 
     // Timer de nivel y estado de audio/proximidad
     let mut level_total = Duration::from_secs(60);
@@ -330,7 +307,7 @@ pub fn main() {
     let mut lost = false;
     let mut last_police = Instant::now() - Duration::from_millis(1000);
     let mut prev_collected = 0usize;
-    let mut picked_key = false;
+    let mut _picked_key = false;
 
     // Main render loop
     while !window.window_should_close() {
@@ -366,7 +343,7 @@ pub fn main() {
         if pressed_one(&window) {
             let (gp, st) = start_level(1, block_size, &mut player, &mut maze, &mut coins, &mut keys_total);
             gate_pos = gp; level_start = st;
-            collected = 0; lost = false; prev_collected = 0; picked_key = false;
+            _collected = 0; lost = false; prev_collected = 0; _picked_key = false;
             println!("[state] Start Level 1 | keys_total={} | coins={} cells", keys_total, coins.len());
             if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Playing1); }
             continue;
@@ -374,7 +351,7 @@ pub fn main() {
         if pressed_two(&window) {
             let (gp, st) = start_level(2, block_size, &mut player, &mut maze, &mut coins, &mut keys_total);
             gate_pos = gp; level_start = st;
-            collected = 0; lost = false; prev_collected = 0; picked_key = false;
+            _collected = 0; lost = false; prev_collected = 0; _picked_key = false;
             println!("[state] Start Level 2 | keys_total={} | coins={} cells", keys_total, coins.len());
             if !fading { fading = true; fade_dir = 1.0; fade_t = 0.0; next_state = Some(GameState::Playing2); }
             continue;
@@ -393,14 +370,14 @@ pub fn main() {
 
         process_events(&mut player, &window, &maze, block_size);
 
-        collected = pickup_coins(&player, &mut coins, block_size);
+        let _collected = pickup_coins(&player, &mut coins, block_size);
 
         // Sonido y bonus de tiempo al recoger nuevas coins ( +5s por coin )
-        if collected > prev_collected {
-            let gained = (collected - prev_collected) as u64;
+        if _collected > prev_collected {
+            let gained = (_collected - prev_collected) as u64;
             coin_snd.play();
             level_total += Duration::from_secs(5 * gained);
-            prev_collected = collected;
+            prev_collected = _collected;
         }
 
         let elapsed = level_start.elapsed();
@@ -411,9 +388,9 @@ pub fn main() {
             state = GameState::Lost;
         }
 
-        if !lost && collected < keys_total {
-            let dx = player.pos.x - gate_pos.0;
-            let dy = player.pos.y - gate_pos.1;
+        if !lost && _collected < keys_total {
+            let dx = player.position.x - gate_pos.0;
+            let dy = player.position.y - gate_pos.1;
             let d = (dx*dx + dy*dy).sqrt();
             if d < (block_size as f32 * 1.1) && last_police.elapsed() > Duration::from_millis(800) {
                 police_snd.play(); last_police = Instant::now();
@@ -422,15 +399,15 @@ pub fn main() {
 
         // mundo, sprites, minimapa, HUD
         let zbuf = render_world(&mut framebuffer, &maze, block_size, &player, &mut texman);
-        let dist_plane = (framebuffer.width as f32 / 2.0) / (player.fov / 2.0).tan();
-        render_sprites(&mut framebuffer, &player, &mut coins, gate_pos, collected, keys_total, &mut spriteman, block_size, dist_plane, &zbuf);
+        let dist_plane = (framebuffer.width as f32 / 2.0) / (player.field_of_view / 2.0).tan();
+        render_sprites(&mut framebuffer, &player, &mut coins, gate_pos, _collected, keys_total, &mut spriteman, block_size, dist_plane, &zbuf);
         render_minimap(&mut framebuffer, &maze, block_size, &player, &coins, (16, 16), 0.15);
-        framebuffer.swap_buffers(&mut window, &raylib_thread, collected, keys_total, time_left, lost);
+        framebuffer.swap_buffers(&mut window, &raylib_thread, _collected, keys_total, time_left);
 
         // ¿ganaste? (tocar la key en la puerta con 5/8)
-        if collected >= keys_total {
-            let dx = player.pos.x - gate_pos.0;
-            let dy = player.pos.y - gate_pos.1;
+        if _collected >= keys_total {
+            let dx = player.position.x - gate_pos.0;
+            let dy = player.position.y - gate_pos.1;
             let d = (dx*dx + dy*dy).sqrt();
             if d < (block_size as f32 * 0.7) {
                 key_snd.play();

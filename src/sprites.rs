@@ -1,22 +1,23 @@
 use std::f32::consts::PI;
-fn normalize_angle(mut a: f32) -> f32 {
-    while a >  PI { a -= 2.0 * PI; }
-    while a < -PI { a += 2.0 * PI; }
-    a
-}
 use raylib::prelude::*;
 use std::collections::HashMap;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
-use std::path::Path;
-use image::io::Reader as ImageReader;
-use image::GenericImageView;
+use rand::rng;
+use image::ImageReader;
+use crate::maze::{Maze, is_walkable};
+use crate::player::Player;
+use crate::framebuffer::Framebuffer;
 
-#[derive(Clone, Debug)]
 struct CpuImage {
-    w: u32,
-    h: u32,
-    data: Vec<u8>, // RGBA8, row-major
+    width: u32,
+    height: u32,
+    pixel_data: Vec<u8>, 
+}
+
+fn normalize_angle(mut angle_radians: f32) -> f32 {
+    while angle_radians >  PI { angle_radians -= 2.0 * PI; }
+    while angle_radians < -PI { angle_radians += 2.0 * PI; }
+    angle_radians
 }
 
 fn load_any_image_rgba8(path: &str) -> Result<CpuImage, String> {
@@ -27,81 +28,58 @@ fn load_any_image_rgba8(path: &str) -> Result<CpuImage, String> {
     let dynimg = reader.decode().map_err(|e| format!("decode {}: {}", path, e))?;
     let rgba = dynimg.to_rgba8();
     let (w, h) = rgba.dimensions();
-    Ok(CpuImage { w, h, data: rgba.into_raw() })
+    Ok(CpuImage { width: w, height: h, pixel_data: rgba.into_raw() })
 }
 
-use crate::maze::{Maze, is_walkable};
-use crate::player::Player;
-use crate::framebuffer::Framebuffer;
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Sprite {
-    pub x: f32,    // mundo px
-    pub y: f32,    // mundo px
-    pub size: f32, // tamaño “alto” en px en el mundo (luego se proyecta)
-    pub ch: char,  // 'c' = coin, 'P' = polis, 'Q' = quiz
-    pub alive: bool,
+    pub world_x: f32, // Posición X en el mundo (píxeles)
+    pub world_y: f32, // Posición Y en el mundo (píxeles)
+    pub size: f32, // Tamaño en píxeles del mundo (antes de proyección)
+    pub sprite_type: char, // Tipo de sprite: 'c' = moneda, 'P' = policía, 'Q' = portal
+    pub is_active: bool, // Si el sprite está activo/visible
 }
 
 pub struct SpriteManager {
-    images: HashMap<char, CpuImage>, // muestreo CPU RGBA8
+    sprite_textures: HashMap<char, CpuImage>, // Texturas de sprites cargadas
 }
 
 impl SpriteManager {
     pub fn new() -> Result<Self, String> {
-        let mut images = HashMap::new();
+        let mut sprite_textures = HashMap::new();
 
-        // Carga tus sprites con soporte WEBP/PNG usando el crate `image`
-        // coin: prefer WEBP, fallback a PNG
-        let coin = if Path::new("assets/coin.webp").exists() {
-            load_any_image_rgba8("assets/coin.webp")?
-        } else {
-            load_any_image_rgba8("assets/coin.png")?
-        };
+        // Cargar sprites
+        let coin = load_any_image_rgba8("assets/coin.webp")?;
+        let police = load_any_image_rgba8("assets/police.png")?;
+        let keys = load_any_image_rgba8("assets/keys.webp")?;
 
-        // polis: PNG (try police.png then police.png)
-        let polis = if Path::new("assets/police.png").exists() {
-            load_any_image_rgba8("assets/police.png")?
-        } else {
-            load_any_image_rgba8("assets/police.png")?
-        };
+        sprite_textures.insert('c', coin);
+        sprite_textures.insert('P', police);
+        sprite_textures.insert('Q', keys);
 
-        // portal abierto: prefer keys.webp (tu archivo), luego quiz.webp, luego quiz.png
-        let quiz = if Path::new("assets/keys.webp").exists() {
-            load_any_image_rgba8("assets/keys.webp")?
-        } else if Path::new("assets/quiz.webp").exists() {
-            load_any_image_rgba8("assets/quiz.webp")?
-        } else {
-            load_any_image_rgba8("assets/quiz.png")?
-        };
-
-        images.insert('c', coin);
-        images.insert('P', polis);
-        images.insert('Q', quiz);
-
-        Ok(Self { images })
+        Ok(Self { sprite_textures })
     }
 
-    pub fn get_size(&self, ch: char) -> (u32, u32) {
-        if let Some(img) = self.images.get(&ch) {
-            (img.w, img.h)
+    pub fn get_size(&self, sprite_type: char) -> (u32, u32) {
+        if let Some(img) = self.sprite_textures.get(&sprite_type) {
+            (img.width, img.height)
         } else {
             (1, 1)
         }
     }
 
-    pub fn sample(&self, ch: char, tx: u32, ty: u32) -> Color {
-        if let Some(img) = self.images.get(&ch) {
-            let w = img.w.max(1);
-            let h = img.h.max(1);
-            let x = tx.min(w - 1);
-            let y = ty.min(h - 1);
-            let idx = ((y * w + x) as usize) * 4;
-            if idx + 3 < img.data.len() {
-                let r = img.data[idx];
-                let g = img.data[idx + 1];
-                let b = img.data[idx + 2];
-                let a = img.data[idx + 3];
+    pub fn sample(&self, sprite_type: char, texture_x: u32, texture_y: u32) -> Color {
+        if let Some(img) = self.sprite_textures.get(&sprite_type) {
+            let width = img.width.max(1);
+            let height = img.height.max(1);
+            let x = texture_x.min(width - 1);
+            let y = texture_y.min(height - 1);
+            let pixel_index = ((y * width + x) as usize) * 4;
+            if pixel_index + 3 < img.pixel_data.len() {
+                let r = img.pixel_data[pixel_index];
+                let g = img.pixel_data[pixel_index + 1];
+                let b = img.pixel_data[pixel_index + 2];
+                let a = img.pixel_data[pixel_index + 3];
                 return Color::new(r, g, b, a);
             }
         }
@@ -109,7 +87,7 @@ impl SpriteManager {
     }
 }
 
-/// Selecciona `n` celdas libres al azar y crea sprites “moneda”
+/// Selecciona `n` celdas libres al azar (no son paredes) y crea sprites “moneda”
 pub fn spawn_coins(maze: &Maze, block_size: usize, n: usize) -> Vec<Sprite> {
     let mut free_cells = Vec::new();
     for (j, row) in maze.iter().enumerate() {
@@ -119,110 +97,107 @@ pub fn spawn_coins(maze: &Maze, block_size: usize, n: usize) -> Vec<Sprite> {
             }
         }
     }
-    free_cells.shuffle(&mut thread_rng());
+    free_cells.shuffle(&mut rng());
 
     let mut out = Vec::new();
     for (i, j) in free_cells.into_iter().take(n) {
         let x = (i * block_size + block_size / 2) as f32;
         let y = (j * block_size + block_size / 2) as f32;
         out.push(Sprite {
-            x,
-            y,
+            world_x: x,
+            world_y: y,
             size: (block_size as f32) * 0.4, // moneda más chica (40% de la celda)
-            ch: 'c',
-            alive: true,
+            sprite_type: 'c',
+            is_active: true,
         });
     }
     out
 }
 
-/// Render de sprites con proyección + z-buffer (occlusión por paredes)
+
 pub fn render_sprites(
     framebuffer: &mut Framebuffer,
     player: &Player,
     sprites: &mut [Sprite],
-    gate_pos: (f32, f32),
-    got_coins: usize,
-    needed: usize,
-    sm: &mut SpriteManager,
+    portal_position: (f32, f32),
+    coins_collected: usize,
+    coins_needed: usize,
+    sprite_manager: &mut SpriteManager,
     block_size: usize,
-    dist_plane: f32,
-    zbuf: &[f32],
+    projection_distance: f32,
+    depth_buffer: &[f32],
 ) {
-    // Construir lista: monedas vivas + sprite del portal (polis/quiz)
-    let mut all = Vec::new();
-    all.extend(sprites.iter().filter(|s| s.alive).cloned());
-    all.push(Sprite {
-        x: gate_pos.0,
-        y: gate_pos.1,
+    // Construir lista: monedas vivas + sprite de cierre nivel (police/keys)
+    let mut visible_sprites = Vec::new();
+    visible_sprites.extend(sprites.iter().filter(|s| s.is_active).cloned());
+    visible_sprites.push(Sprite {
+        world_x: portal_position.0,
+        world_y: portal_position.1,
         size: block_size as f32 * 1.0,
-        ch: if got_coins >= needed { 'Q' } else { 'P' },
-        alive: true,
+        sprite_type: if coins_collected >= coins_needed { 'Q' } else { 'P' },
+        is_active: true,
     });
 
-    // Ordenar de lejos a cerca (pintamos del más lejano al más cercano)
-    all.sort_by(|a, b| {
-        let da = (a.x - player.pos.x).hypot(a.y - player.pos.y);
-        let db = (b.x - player.pos.x).hypot(b.y - player.pos.y);
-        db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+    // Ordenar de lejos a cerca 
+    visible_sprites.sort_by(|a, b| {
+        let distance_a = (a.world_x - player.position.x).hypot(a.world_y - player.position.y);
+        let distance_b = (b.world_x - player.position.x).hypot(b.world_y - player.position.y);
+        distance_b.partial_cmp(&distance_a).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let hw = framebuffer.width as f32 * 0.5;
-    let hh = framebuffer.height as f32 * 0.5;
+    let half_width = framebuffer.width as f32 * 0.5;
+    let half_height = framebuffer.height as f32 * 0.5;
 
-    for s in all {
-        // Vector del jugador al sprite (mundo)
-        let dx = s.x - player.pos.x;
-        let dy = s.y - player.pos.y;
+    for sprite in visible_sprites {
+        // Vector del jugador al sprite
+        let dx = sprite.world_x - player.position.x;
+        let dy = sprite.world_y - player.position.y;
 
-        // Ángulo absoluto al sprite y diferencia relativa al ángulo de la cámara
-        let sprite_ang = dy.atan2(dx);
-        let mut diff = normalize_angle(sprite_ang - player.a);
+        let sprite_angle = dy.atan2(dx);
+        let diff = normalize_angle(sprite_angle - player.angle);
 
-        // Culling por FOV (con margen pequeño)
-        let fov_half = player.fov * 0.5;
+        // Culling por FOV
+        let fov_half = player.field_of_view * 0.5;
         if diff.abs() > fov_half * 1.05 { continue; }
 
-        // Distancia euclidiana y distancia perpendicular al plano de proyección
-        let dist = dx.hypot(dy);
-        let mut perp = (dist * diff.cos().abs()).max(0.0001);
+        let distance = dx.hypot(dy);
+        let mut perp = (distance * diff.cos().abs()).max(0.0001);
         let near = 0.30 * block_size as f32;
         if perp < near { perp = near; }
 
-        // Proyección billboard estable
-        let sprite_h = (s.size * dist_plane) / perp;
-        let sprite_w = sprite_h; // cuadrado
-        let screen_x = hw + diff.tan() * dist_plane;
+        let sprite_height = (sprite.size * projection_distance) / perp;
+        let sprite_width = sprite_height; 
+        let screen_x = half_width + diff.tan() * projection_distance;
 
-        let x0 = (screen_x - sprite_w * 0.5).floor() as i32;
-        let x1 = (screen_x + sprite_w * 0.5).ceil()  as i32;
-        let y0 = (hh - sprite_h * 0.5).floor() as i32;
-        let y1 = (hh + sprite_h * 0.5).ceil()  as i32;
+        let x0 = (screen_x - sprite_width * 0.5).floor() as i32;
+        let x1 = (screen_x + sprite_width * 0.5).ceil()  as i32;
+        let y0 = (half_height - sprite_height * 0.5).floor() as i32;
+        let y1 = (half_height + sprite_height * 0.5).ceil()  as i32;
 
         // Tamaño de textura
-        let (tw_u, th_u) = sm.get_size(s.ch);
-        let tw = tw_u as i32; let th = th_u as i32;
-        if tw <= 0 || th <= 0 { continue; }
+        let (texture_width, texture_height) = sprite_manager.get_size(sprite.sprite_type);
+        let texture_width = texture_width as i32; let texture_height = texture_height as i32;
+        if texture_width <= 0 || texture_height <= 0 { continue; }
 
         // Raster columna a columna
         for sx in x0.max(0) ..= x1.min(framebuffer.width as i32 - 1) {
             let col = sx as usize;
 
             // Oclusión: si pared está delante de este sprite en esta columna, saltar
-            if col < zbuf.len() && perp >= zbuf[col] - 0.001 { continue; }
+            if col < depth_buffer.len() && perp >= depth_buffer[col] - 0.001 { continue; }
 
-            let u = (sx as f32 - (screen_x - sprite_w * 0.5)) / sprite_w; // [0,1]
+            let u = (sx as f32 - (screen_x - sprite_width * 0.5)) / sprite_width; // [0,1]
             if !(0.0..=1.0).contains(&u) { continue; }
-            let tex_x = (u * tw as f32).clamp(0.0, (tw - 1) as f32) as i32;
+            let texture_x = (u * texture_width as f32).clamp(0.0, (texture_width - 1) as f32) as i32;
 
             let yy0 = y0.max(0);
             let yy1 = y1.min(framebuffer.height as i32 - 1);
             for sy in yy0 ..= yy1 {
                 let v = (sy as f32 - y0 as f32) / ((y1 - y0).max(1) as f32);
                 if !(0.0..=1.0).contains(&v) { continue; }
-                let tex_y = (v * th as f32).clamp(0.0, (th - 1) as f32) as i32;
+                let texture_y = (v * texture_height as f32).clamp(0.0, (texture_height - 1) as f32) as i32;
 
-                let c = sm.sample(s.ch, tex_x as u32, tex_y as u32);
+                let c = sprite_manager.sample(sprite.sprite_type, texture_x as u32, texture_y as u32);
                 // Transparencia: alpha o color-key opcional
                 if c.a < 16 { continue; }
                 if c.r == 152 && c.g == 0 && c.b == 136 && c.a == 255 { continue; }
@@ -234,20 +209,25 @@ pub fn render_sprites(
     }
 }
 
-/// Check pickup: si el jugador está cerca de una moneda -> recolectar
+/// Verifica y recoge monedas cercanas al jugador
 pub fn pickup_coins(player: &Player, sprites: &mut [Sprite], block_size: usize) -> usize {
-    let r = 0.35 * block_size as f32;
+    let pickup_radius = 0.35 * block_size as f32;
 
-    // 1) recolecta: marca como muertas las monedas cerca del jugador
-    for s in sprites.iter_mut() {
-        if s.alive && s.ch == 'c' {
-            let d = (s.x - player.pos.x).hypot(s.y - player.pos.y);
-            if d < r { s.alive = false; }
+    for sprite in sprites.iter_mut() {
+        if sprite.is_active && sprite.sprite_type == 'c' {
+            let distance_to_player = (sprite.world_x - player.position.x)
+                .hypot(sprite.world_y - player.position.y);
+            if distance_to_player < pickup_radius { 
+                sprite.is_active = false; 
+            }
         }
     }
 
-    // 2) cuenta total y vivas para devolver "collected = total - vivas"
-    let total  = sprites.iter().filter(|s| s.ch == 'c').count();
-    let alive  = sprites.iter().filter(|s| s.ch == 'c' && s.alive).count();
-    total.saturating_sub(alive)
+    // Conteo de monedas
+    let total_coins = sprites.iter().filter(|s| s.sprite_type == 'c').count();
+    let remaining_coins = sprites.iter()
+        .filter(|s| s.sprite_type == 'c' && s.is_active)
+        .count();
+    
+    total_coins.saturating_sub(remaining_coins)
 }
