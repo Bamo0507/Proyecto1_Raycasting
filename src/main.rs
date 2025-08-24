@@ -250,6 +250,8 @@ pub fn main() {
         .log_level(TraceLogLevel::LOG_WARNING)
         .build();
 
+    window.disable_cursor();
+
     let screens = Screens {
         welcome: window.load_texture(&raylib_thread, "assets/welcome_screen.png").expect("welcome_screen"),
         picker: window.load_texture(&raylib_thread, "assets/level_picker.png").expect("level_picker"),
@@ -289,11 +291,11 @@ pub fn main() {
     // Cargar texturas de paredes (wall + graffiti)
     let mut texman = TextureManager::new(&mut window, &raylib_thread).expect("Error cargando texturas");
 
-    let mut player = Player {
-        position: Vector2::new((block_size / 2) as f32, (block_size / 2) as f32), // placeholder
-        angle: PI / 3.0,
-        field_of_view: PI / 2.0,
-    };
+    let mut player = Player::new(
+        Vector2::new(100.0, 100.0), 
+        0.0, 
+        std::f32::consts::PI / 3.0,
+    );
 
     // Cargar sprites
     let mut spriteman = SpriteMgr::new().expect("Error cargando sprites");
